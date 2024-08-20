@@ -54,10 +54,9 @@ class AudioGuestBook:
             mixer_control_name=self.config["mixer_control_name"],
         )
 
-        self.current_event = CurrentEvent.NONE
-
         self.setup_hook()
         self.setup_record_greeting()
+        self.current_event = CurrentEvent.NONE
 
     def load_config(self):
         """
