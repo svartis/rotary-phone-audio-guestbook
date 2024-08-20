@@ -54,8 +54,6 @@ class AudioGuestBook:
             mixer_control_name=self.config["mixer_control_name"],
         )
 
-        self.event_thread = None
-        self.timer = None
         self.current_event = CurrentEvent.NONE
 
         self.setup_hook()
