@@ -7,6 +7,8 @@ from datetime import datetime
 from pathlib import Path
 from signal import pause
 from enum import Enum
+import glob
+import os
 
 import yaml
 from gpiozero import Button
@@ -20,6 +22,7 @@ class CurrentEvent(Enum):
     NONE = 0
     HOOK = 1
     RECORD_GREETING = 2
+    PLAYBACK_LATEST = 3
 
 class AudioGuestBook:
     """
@@ -54,6 +57,7 @@ class AudioGuestBook:
         )
         self.setup_hook()
         self.setup_record_greeting()
+        self.setup_playback_latest()
         self.current_event = CurrentEvent.NONE
 
     def load_config(self):
@@ -74,10 +78,10 @@ class AudioGuestBook:
         """
         Sets up the phone hook switch with GPIO based on the configuration.
         """
-        hook_gpio = self.config["hook_gpio"]
+        gpio_pin = self.config["hook_gpio"]
         pull_up = self.config["hook_type"] == "NC"
         bounce_time = self.config["hook_bounce_time"]
-        self.hook = Button(hook_gpio, pull_up=pull_up, bounce_time=bounce_time)
+        self.hook = Button(gpio_pin, pull_up=pull_up, bounce_time=bounce_time)
         self.hook.when_pressed = self.off_hook
         self.hook.when_released = self.on_hook
 
@@ -94,8 +98,8 @@ class AudioGuestBook:
 
         self.current_event = CurrentEvent.HOOK # Ensure playback can continue
         # Start the greeting playback in a separate thread
-        self.greeting_thread = threading.Thread(target=self.play_greeting_and_beep)
-        self.greeting_thread.start()
+        self.event_thread = threading.Thread(target=self.play_greeting_and_beep)
+        self.event_thread.start()
 
     def start_recording(self, output_file: str):
         """
@@ -116,7 +120,7 @@ class AudioGuestBook:
         """
         # Play the greeting
         self.audio_interface.continue_playback = self.current_event == CurrentEvent.HOOK
-        logger.info("Playing voicemail...")
+        logger.info("Playing greeting...")
         self.audio_interface.play_audio(
             self.config["greeting"],
             self.config["greeting_volume"],
@@ -124,11 +128,9 @@ class AudioGuestBook:
         )
 
         # Check if the phone is still off-hook
-        # Start recording already BEFORE the beep
-        if self.current_event == CurrentEvent.HOOK:
-            path = str(
-                Path(self.config["recordings_path"]) / f"{datetime.now().isoformat()}.wav"
-            )
+        # Start recording already BEFORE the beep (beep will be included in message)
+        if self.current_event == CurrentEvent.HOOK and self.config["beep_include_in_message"] == True:
+            path = os.path.join(self.config["recordings_path"], f"{datetime.now().isoformat()}.wav")
             self.start_recording(path)
 
         # Play the beep
@@ -140,17 +142,17 @@ class AudioGuestBook:
                 self.config["beep_start_delay"],
             )
 
+        # Check if the phone is still off-hook
+        # Start recording AFTER the beep (beep will NOT be included in message)
+        if self.current_event == CurrentEvent.HOOK and self.config["beep_include_in_message"] == False:
+            path = os.path.join(self.config["recordings_path"], f"{datetime.now().isoformat()}.wav")
+            self.start_recording(path)            
+
     def on_hook(self):
         """
         Handles the on-hook event to stop and save the recording.
         """
-        # Check that the off-hook event is in progress
-        if self.current_event != CurrentEvent.HOOK:
-            return
-        
-        logger.info("Phone on hook. Ending call and saving recording.")
-        self.current_event = CurrentEvent.NONE # Stop playback and reset current event
-        self.stop_recording_and_playback()
+        self.stop_event_thread("Phone on hook. Ending call and saving recording.")
 
     def time_exceeded(self):
         """
@@ -166,13 +168,13 @@ class AudioGuestBook:
         """
         Sets up the phone record greeting switch with GPIO based on the configuration.
         """
-        record_greeting_gpio = self.config["record_greeting_gpio"]
-        if record_greeting_gpio == 0:
+        gpio_pin = self.config["record_greeting_gpio"]
+        if gpio_pin == 0:
             logger.info("record_greeting_gpio is 0, skipping setup.")
             return
         pull_up = self.config["record_greeting_type"] == "NC"
         bounce_time = self.config["record_greeting_bounce_time"]
-        self.record_greeting = Button(record_greeting_gpio, pull_up=pull_up, bounce_time=bounce_time)
+        self.record_greeting = Button(gpio_pin, pull_up=pull_up, bounce_time=bounce_time)
         self.record_greeting.when_pressed = self.pressed_record_greeting
         self.record_greeting.when_released = self.released_record_greeting
 
@@ -189,20 +191,14 @@ class AudioGuestBook:
 
         self.current_event = CurrentEvent.RECORD_GREETING # Ensure record greeting can continue
         # Start the record greeting in a separate thread
-        self.greeting_thread = threading.Thread(target=self.beep_and_record_greeting)
-        self.greeting_thread.start()
+        self.event_thread = threading.Thread(target=self.beep_and_record_greeting)
+        self.event_thread.start()
 
     def released_record_greeting(self):
         """
         Handles the record greeting event to stop and save the greeting.
         """
-        # Check that the record greeting event is in progress
-        if self.current_event != CurrentEvent.RECORD_GREETING:
-            return
-        
-        logger.info("Record greeting released. Save the greeting.")
-        self.current_event = CurrentEvent.NONE # Stop playback and reset current event
-        self.stop_recording_and_playback()
+        self.stop_event_thread("Record greeting released. Save the greeting.")
 
     def beep_and_record_greeting(self):
         """
@@ -222,22 +218,78 @@ class AudioGuestBook:
 
         # Check if the record greeting message button is still pressed      
         if self.current_event == CurrentEvent.RECORD_GREETING:
-            path = str(
-                Path(self.config["greeting"])
-            )
             # Start recording new greeting message       
-            self.start_recording(path)
+            self.start_recording(self.config["greeting"])
 
-    def stop_recording_and_playback(self):
+    def stop_event_thread(self, logMessage:str):
         """
         Stop recording and playback processes.
         """
+        logger.info(logMessage)
+        self.current_event = CurrentEvent.NONE # Stop playback and reset current event
         self.audio_interface.stop_recording()
         if hasattr(self, "timer"):
             self.timer.cancel()
-        if hasattr(self, "greeting_thread") and self.greeting_thread.is_alive():
+        if hasattr(self, "event_thread") and self.event_thread.is_alive():
             logger.info("Stopping playback.")
             self.audio_interface.stop_playback()
+
+    def setup_playback_latest(self):
+        """
+        Sets up the phone playback latest message switch with GPIO based on the configuration.
+        """
+        gpio_pin = self.config["playback_gpio"]
+        if gpio_pin == 0:
+            logger.info("playback_gpio is 0, skipping setup.")
+            return
+        pull_up = self.config["playback_type"] == "NC"
+        bounce_time = self.config["playback_bounce_time"]
+        self.playback_latest = Button(gpio_pin, pull_up=pull_up, bounce_time=bounce_time)
+        self.playback_latest.when_pressed = self.pressed_playback_latest
+
+    def pressed_playback_latest(self):
+        """
+        Handles the playback latest message.
+        """
+        # Check that no other event is currently in progress
+        if self.current_event != CurrentEvent.NONE:
+            logger.info("Another event is in progress. Ignoring playback latest message.")
+            return
+
+        logger.info("Playback latest message pressed, ready to begin!")
+
+        self.current_event = CurrentEvent.PLAYBACK_LATEST # Ensure latest message can continue
+        # Start the latest message in a separate thread
+        self.event_thread = threading.Thread(target=self.playback_latest_message)
+        self.event_thread.start()
+
+    def playback_latest_message(self):
+        """
+        Plays the beep and start recording a new greeting message #, checking for the button event.
+        """
+
+        # Find latest file in recordings path according to file type
+        path = os.path.join(self.config["recordings_path"], '*.' + self.config["file_type"])
+        files = glob.glob(path)
+
+        self.audio_interface.continue_playback = self.current_event == CurrentEvent.PLAYBACK_LATEST
+
+        if len(files) > 0:
+            latest_file = max(files)
+
+            logger.info(f"Playing latest message: {latest_file}")
+            self.audio_interface.play_audio(
+                latest_file, self.config["playback_volume"], 0
+            )
+        else:
+            logger.info("No messages to playback.")
+
+        logger.info("Playing call ended...")
+        self.audio_interface.play_audio(
+            self.config["call_ended"], self.config["call_ended_volume"], 0
+        )
+
+        self.stop_event_thread("Playback latest message completed.")
 
     def run(self):
         """

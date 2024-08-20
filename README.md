@@ -81,7 +81,7 @@ With your hardware ready, download the custom Raspberry Pi image provided, which
 
 Once your system is up and running, you will want to make adjustments to suit your specific setup, especially if your hardware differs or you have personal preferences for how the guestbook operates.
 
-- [ ] Replace the voicemail.wav with your own custom recording
+- [ ] Replace the greeting.wav with your own custom recording
 - [ ] Check your ALSA HW mapping
 
   Depending on your audio interface's configuration, you may need to adjust the ALSA settings further. If after running `aplay -l` you find that the ALSA hardware mapping differs from what is expected or if you're experiencing audio issues, consider modifying `.asoundrc` to ensure your device correctly identifies and uses your audio interface. For example, if your USB audio interface is listed as card 1, device 0, you might add or modify `.asoundrc` to include:
@@ -209,7 +209,7 @@ To replace:
 - On hook (depressed)
   - Nothing happens
 - Off hook (released)
-  - Plays back your own added welcome message located in `/sounds/voicemail.wav` followed by the [beep](/sounds/beep.wav) indicating the start of recording.
+  - Plays back your own added welcome message located in `/sounds/greeting.wav` followed by the [beep](/sounds/beep.wav) indicating the start of recording.
   - Begins recording the guests voice message.
   - Guest hangs up, recording is stopped and stored to the `/recordings/` directory.
   - If the guest exceeds the **recording_limit** specified in the [config.yaml](/config.yaml), play the warning [time_exceeded.wav](/sounds/time_exceeded.wav) sound and stop recording.
