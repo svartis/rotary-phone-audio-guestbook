@@ -70,14 +70,14 @@ class AudioInterface:
                 ["amixer", "set", self.mixer_control_name, f"{volume}%"], check=True
             )
         except subprocess.CalledProcessError as e:
-            logger.error(f"Error setting volume: {e}")
+            logger.error("Error setting volume: %s", e)
 
     def play_audio(self, input_file, volume=1, start_delay_sec=0):
         """
         Plays an audio file using `aplay` after setting the volume with `amixer`.
         """
         if not Path(input_file).exists():
-            logger.error(f"Audio file {input_file} not found.")
+            logger.error("Audio file %s not found.", input_file)
             return
 
         self.set_volume(volume)
@@ -105,7 +105,7 @@ class AudioInterface:
                     ["aplay", "-D", str(self.alsa_hw_mapping), silence_file], check=True
                 )
             except subprocess.CalledProcessError as e:
-                logger.error(f"Error generating or playing silence file: {e}")
+                logger.error("Error generating or playing silence file: %s", e)
 
         # Play the actual audio file
         try:
@@ -122,7 +122,7 @@ class AudioInterface:
                     break
                 time.sleep(0.1)
         except subprocess.CalledProcessError as e:
-            logger.error(f"Error playing {input_file}: {e}")
+            logger.error("Error playing %s: %s", input_file, e)
         finally:
             if self.playback_process:
                 self.playback_process = None

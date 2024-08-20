@@ -17,6 +17,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 class CurrentEvent(Enum):
+    """ Enum to represent the current event in progress. """
     NONE = 0
     HOOK = 1
     RECORD_GREETING = 2
@@ -52,9 +53,13 @@ class AudioGuestBook:
             channels=self.config["channels"],
             mixer_control_name=self.config["mixer_control_name"],
         )
+
+        self.event_thread = None
+        self.timer = None
+        self.current_event = CurrentEvent.NONE
+
         self.setup_hook()
         self.setup_record_greeting()
-        self.current_event = CurrentEvent.NONE
 
     def load_config(self):
         """
@@ -64,20 +69,20 @@ class AudioGuestBook:
             FileNotFoundError: If the configuration file does not exist.
         """
         try:
-            with open(self.config_path, "r") as f:
+            with open(self.config_path, "r", encoding="utf-8") as f:
                 return yaml.safe_load(f)
         except FileNotFoundError as e:
-            logger.error(f"Configuration file not found: {e}")
+            logger.error("Configuration file not found: %s", e)
             sys.exit(1)
 
     def setup_hook(self):
         """
         Sets up the phone hook switch with GPIO based on the configuration.
         """
-        hook_gpio = self.config["hook_gpio"]
+        gpio_pin = self.config["hook_gpio"]
         pull_up = self.config["hook_type"] == "NC"
         bounce_time = self.config["hook_bounce_time"]
-        self.hook = Button(hook_gpio, pull_up=pull_up, bounce_time=bounce_time)
+        self.hook = Button(gpio_pin, pull_up=pull_up, bounce_time=bounce_time)
         self.hook.when_pressed = self.off_hook
         self.hook.when_released = self.on_hook
 
@@ -94,8 +99,8 @@ class AudioGuestBook:
 
         self.current_event = CurrentEvent.HOOK # Ensure playback can continue
         # Start the greeting playback in a separate thread
-        self.greeting_thread = threading.Thread(target=self.play_greeting_and_beep)
-        self.greeting_thread.start()
+        self.event_thread = threading.Thread(target=self.play_greeting_and_beep)
+        self.event_thread.start()
 
     def start_recording(self, output_file: str):
         """
@@ -147,7 +152,7 @@ class AudioGuestBook:
         # Check that the off-hook event is in progress
         if self.current_event != CurrentEvent.HOOK:
             return
-        
+
         logger.info("Phone on hook. Ending call and saving recording.")
         self.current_event = CurrentEvent.NONE # Stop playback and reset current event
         self.stop_recording_and_playback()
@@ -166,13 +171,13 @@ class AudioGuestBook:
         """
         Sets up the phone record greeting switch with GPIO based on the configuration.
         """
-        record_greeting_gpio = self.config["record_greeting_gpio"]
-        if record_greeting_gpio == 0:
+        gpio_pin = self.config["record_greeting_gpio"]
+        if gpio_pin == 0:
             logger.info("record_greeting_gpio is 0, skipping setup.")
             return
         pull_up = self.config["record_greeting_type"] == "NC"
         bounce_time = self.config["record_greeting_bounce_time"]
-        self.record_greeting = Button(record_greeting_gpio, pull_up=pull_up, bounce_time=bounce_time)
+        self.record_greeting = Button(gpio_pin, pull_up=pull_up, bounce_time=bounce_time)
         self.record_greeting.when_pressed = self.pressed_record_greeting
         self.record_greeting.when_released = self.released_record_greeting
 
@@ -189,8 +194,8 @@ class AudioGuestBook:
 
         self.current_event = CurrentEvent.RECORD_GREETING # Ensure record greeting can continue
         # Start the record greeting in a separate thread
-        self.greeting_thread = threading.Thread(target=self.beep_and_record_greeting)
-        self.greeting_thread.start()
+        self.event_thread = threading.Thread(target=self.beep_and_record_greeting)
+        self.event_thread.start()
 
     def released_record_greeting(self):
         """
@@ -199,7 +204,7 @@ class AudioGuestBook:
         # Check that the record greeting event is in progress
         if self.current_event != CurrentEvent.RECORD_GREETING:
             return
-        
+
         logger.info("Record greeting released. Save the greeting.")
         self.current_event = CurrentEvent.NONE # Stop playback and reset current event
         self.stop_recording_and_playback()
@@ -220,12 +225,12 @@ class AudioGuestBook:
                 self.config["beep_start_delay"],
             )
 
-        # Check if the record greeting message button is still pressed      
+        # Check if the record greeting message button is still pressed
         if self.current_event == CurrentEvent.RECORD_GREETING:
             path = str(
                 Path(self.config["greeting"])
             )
-            # Start recording new greeting message       
+            # Start recording new greeting message
             self.start_recording(path)
 
     def stop_recording_and_playback(self):
@@ -235,7 +240,7 @@ class AudioGuestBook:
         self.audio_interface.stop_recording()
         if hasattr(self, "timer"):
             self.timer.cancel()
-        if hasattr(self, "greeting_thread") and self.greeting_thread.is_alive():
+        if hasattr(self, "event_thread") and self.event_thread.is_alive():
             logger.info("Stopping playback.")
             self.audio_interface.stop_playback()
 
@@ -249,6 +254,6 @@ class AudioGuestBook:
 
 if __name__ == "__main__":
     CONFIG_PATH = Path(__file__).parent / "../config.yaml"
-    logger.info(f"Using configuration file: {CONFIG_PATH}")
+    logger.info("Using configuration file: %s", CONFIG_PATH)
     guest_book = AudioGuestBook(CONFIG_PATH)
     guest_book.run()
